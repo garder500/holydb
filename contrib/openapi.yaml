@@ -1,0 +1,222 @@
+openapi: 3.0.3
+info:
+  title: HolyDB Storage API
+  description: |
+    API S3-like minimale pour HolyDB — endpoints exposés sous /v1/storage/.
+    Ce document décrit les opérations actuellement embarquées par le serveur LocalStorage.
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+paths:
+  /v1/storage/{bucket}/{key}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Nom du bucket
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Chemin/clé de l'objet (peut contenir des slashes)
+    put:
+      summary: Upload d'un objet
+      description: |
+        Upload d'un objet. envoyer le corps en binaire (application/octet-stream).
+        En option : header X-Meta-JSON contenant un objet Metadata JSON.
+        Pour upload multipart, utilisez les query params uploadId & partNumber (PUT parpart).
+      parameters:
+        - name: uploadId
+          in: query
+          schema:
+            type: string
+          description: Identifiant d'upload multipart (optionnel)
+        - name: partNumber
+          in: query
+          schema:
+            type: integer
+          description: Numéro de part (optionnel; avec uploadId)
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Objet créé
+        '200':
+          description: Part upload OK (avec uploadId & partNumber)
+        '500':
+          description: Erreur serveur
+    get:
+      summary: Télécharger un objet
+      responses:
+        '200':
+          description: Contenu binaire (concaténation des parts)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Objet non trouvé
+    delete:
+      summary: Supprimer un objet
+      responses:
+        '204':
+          description: Objet supprimé
+        '500':
+          description: Erreur serveur
+  /v1/storage/{bucket}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Nom du bucket
+    post:
+      summary: Opérations de bucket (start multipart)
+      description: |
+        Si la query string contient `uploads=1` la route démarre un multipart upload et retourne un uploadId.
+      parameters:
+        - name: uploads
+          in: query
+          schema:
+            type: string
+          description: Si défini (par ex. uploads=1) démarre l'upload multipart
+      responses:
+        '200':
+          description: Retourne l'uploadId en texte brut
+    get:
+      summary: Lister des objets
+      description: Liste les clés d'objet sous un prefix éventuel
+      parameters:
+        - name: prefix
+          in: query
+          schema:
+            type: string
+          description: Filtre préfixe
+      responses:
+        '200':
+          description: Liste des objets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+  /v1/storage/{bucket}/.bucket.meta:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      summary: Écrire les métadonnées du bucket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BucketMetadata'
+      responses:
+        '200':
+          description: OK
+    get:
+      summary: Lire les métadonnées du bucket
+      responses:
+        '200':
+          description: Bucket metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BucketMetadata'
+  /v1/storage/{bucket}/_stats:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Statistiques du bucket
+      responses:
+        '200':
+          description: Statistiques
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stats'
+  /v1/storage/{bucket}/_reconstruct/{key}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Reconstituer un fichier à partir des parts
+      description: |
+        Concatène les parts de l'objet et écrit un fichier de sortie. Le paramètre query `out` est requis,
+        `include` (liste de clés metadata séparées par virgule) permet d'intégrer des métadonnées sélectionnées
+        dans un header binaire préfixé.
+      parameters:
+        - name: out
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Chemin de sortie sur le serveur (absolu ou relatif au processus)
+        - name: include
+          in: query
+          schema:
+            type: string
+          description: Liste de clés metadata à inclure (comma-separated)
+      responses:
+        '200':
+          description: Reconstitution OK
+components:
+  schemas:
+    Metadata:
+      type: object
+      additionalProperties:
+        type: string
+      description: Paires clé/valeur pour métadonnées d'objet
+    BucketMetadata:
+      type: object
+      properties:
+        capacity_bytes:
+          type: integer
+          format: int64
+          description: Capacité max (0 = illimitée)
+        retention_days:
+          type: integer
+          description: Durée de rétention en jours (0 = illimitée)
+      required: []
+    Stats:
+      type: object
+      properties:
+        object_count:
+          type: integer
+          format: int64
+        used_bytes:
+          type: integer
+          format: int64
+        capacity_bytes:
+          type: integer
+          format: int64
+externalDocs:
+  description: README & serveur
+  url: ../README.md
