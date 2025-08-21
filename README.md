@@ -6,7 +6,7 @@ This is my version of "holyDB", a database system that might include a different
 
 ### Prerequisites
 
-- Go 1.24.6 or later
+- Go 1.24.5 or later
 
 ### Installation
 
@@ -57,7 +57,7 @@ make test
 ### Other Commands
 
 - `make fmt` - Format code
-- `make vet` - Vet code  
+- `make vet` - Vet code
 - `make clean` - Clean build artifacts
 - `make help` - Show all available make targets
 
