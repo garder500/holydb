@@ -100,6 +100,20 @@ func (s *LocalStorage) PutWithMetadata(ctx context.Context, bucket, key string, 
 		return err
 	}
 	objDir := filepath.Join(dir, key)
+	// If key denotes a directory (ends with '/'), create a directory marker
+	// and do NOT create part.1 or data.meta
+	if strings.HasSuffix(key, "/") {
+		if err := os.MkdirAll(objDir, 0o755); err != nil {
+			return err
+		}
+		marker := filepath.Join(objDir, ".dir")
+		// create or truncate marker
+		if err := os.WriteFile(marker, []byte{}, 0o644); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	if err := os.MkdirAll(objDir, 0o755); err != nil {
 		return err
 	}
@@ -129,6 +143,17 @@ func (s *LocalStorage) PutMetadata(ctx context.Context, bucket, key string, meta
 		return err
 	}
 	objDir := filepath.Join(dir, key)
+	// For directory keys, do not write data.meta; create a directory marker instead.
+	if strings.HasSuffix(key, "/") {
+		if err := os.MkdirAll(objDir, 0o755); err != nil {
+			return err
+		}
+		marker := filepath.Join(objDir, ".dir")
+		if err := os.WriteFile(marker, []byte{}, 0o644); err != nil {
+			return err
+		}
+		return nil
+	}
 	if err := os.MkdirAll(objDir, 0o755); err != nil {
 		return err
 	}
@@ -204,6 +229,10 @@ func (s *LocalStorage) CompleteMultipart(ctx context.Context, bucket, key, uploa
 	dir, err := s.ensureBucketDir(bucket)
 	if err != nil {
 		return err
+	}
+	// Completing a multipart upload for a directory key is invalid
+	if strings.HasSuffix(key, "/") {
+		return fmt.Errorf("cannot complete multipart upload for directory key %s", key)
 	}
 	partDir := filepath.Join(dir, ".multipart", uploadID)
 	files, err := os.ReadDir(partDir)

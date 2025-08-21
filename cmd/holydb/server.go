@@ -14,6 +14,7 @@ import (
 func runServer(addr, root string) error {
 	ls := &storage.LocalStorage{Root: root}
 	r := mux.NewRouter()
+	r.Use(loggingMiddleware)
 	api := r.PathPrefix("/v1/storage").Subrouter()
 
 	api.HandleFunc("/{bucket}/{rest:.*}", func(w http.ResponseWriter, req *http.Request) {
@@ -163,6 +164,26 @@ func runServer(addr, root string) error {
 	srv := &http.Server{Addr: addr, Handler: r}
 	log.Printf("starting server on %s", addr)
 	return srv.ListenAndServe()
+}
+
+// logging middleware to trace requests and response status
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (l *loggingResponseWriter) WriteHeader(code int) {
+	l.status = code
+	l.ResponseWriter.WriteHeader(code)
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lrw := &loggingResponseWriter{ResponseWriter: w, status: 200}
+		log.Printf("REQ %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr)
+		next.ServeHTTP(lrw, r)
+		log.Printf("RES %d %s %s", lrw.status, r.Method, r.URL.Path)
+	})
 }
 
 // add a simple 'serve' subcommand via Execute
