@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+
+	"github.com/garder500/holydb/internal/server"
 )
 
 // Execute is the main entry point for the holydb command
@@ -62,7 +64,7 @@ func Execute() error {
 			return nil
 		}
 		fmt.Printf("Starting server on %s, root=%s\n", *addr, *root)
-		return runServer(*addr, *root)
+		return server.Run(server.Config{Addr: *addr, Root: *root})
 	default:
 		return fmt.Errorf("unknown command: %s", command)
 	}
