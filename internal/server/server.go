@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 
+	store "github.com/garder500/holydb/internal/server/storage"
 	"github.com/garder500/holydb/pkg/storage"
 	"github.com/gorilla/mux"
 )
@@ -19,17 +20,26 @@ func New(cfg Config) *http.Server {
 	ls := &storage.LocalStorage{Root: cfg.Root}
 	r := mux.NewRouter()
 	r.Use(loggingMiddleware)
+	// Authentication (can be disabled by omitting HOLYDB_CREDENTIALS and setting RequireAuth false if needed)
+	authCfg := defaultAuthConfig()
+	// If root creds not set, allow anonymous (RequireAuth=false) to preserve current behavior.
+	if p, ok := authCfg.Credentials.(*RootCredentialProvider); ok {
+		if p.user == "" || p.pass == "" {
+			authCfg.RequireAuth = false
+		}
+	}
+	r.Use(AuthMiddleware(&authCfg))
 	// versioned API root
 	v1 := r.PathPrefix("/v1").Subrouter()
 	// storage subrouter
 	storageRouter := v1.PathPrefix("/storage").Subrouter()
 
-	RegisterObjectHandlers(storageRouter, ls)
-	RegisterBucketHandlers(storageRouter, ls)
-	RegisterBucketMetaHandlers(storageRouter, ls)
-	RegisterStatsHandlers(storageRouter, ls)
-	RegisterReconstructHandlers(storageRouter, ls)
-	RegisterMultipartHandlers(storageRouter, ls)
+	store.RegisterObjectHandlers(storageRouter, ls)
+	store.RegisterBucketHandlers(storageRouter, ls)
+	store.RegisterBucketMetaHandlers(storageRouter, ls)
+	store.RegisterStatsHandlers(storageRouter, ls)
+	store.RegisterReconstructHandlers(storageRouter, ls)
+	store.RegisterMultipartHandlers(storageRouter, ls)
 
 	return &http.Server{Addr: cfg.Addr, Handler: r}
 }
