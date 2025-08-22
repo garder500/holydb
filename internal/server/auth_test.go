@@ -128,3 +128,45 @@ func TestAuthMiddlewareSigV4(t *testing.T) {
 		t.Fatalf("expected 401 for bad signature, got %d", rr3.Code)
 	}
 }
+
+func TestHolySecurityAuth(t *testing.T) {
+	oldHS := os.Getenv("HOLYDB_HS_KEYS")
+	defer os.Setenv("HOLYDB_HS_KEYS", oldHS)
+	os.Setenv("HOLYDB_HS_KEYS", "apikey1:nodeA")
+	// Disable root user to force HS path
+	os.Unsetenv("HOLYDB_ROOT_USER")
+	os.Unsetenv("HOLYDB_ROOT_PASSWORD")
+	tmp := t.TempDir()
+	srv := New(Config{Addr: ":0", Root: tmp})
+
+	// Valid token
+	now := time.Now().UTC().Format("20060102T150405Z")
+	req := httptest.NewRequest(http.MethodPut, "/v1/storage/bkt/hsobj", strings.NewReader("data"))
+	req.Host = "localhost"
+	req.Header.Set("Authorization", "HO-SEC-V1:apikey1:"+now+":nodeA")
+	rr := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rr.Code)
+	}
+
+	// Wrong name
+	req2 := httptest.NewRequest(http.MethodPut, "/v1/storage/bkt/hsobj2", strings.NewReader("x"))
+	req2.Host = "localhost"
+	req2.Header.Set("Authorization", "HO-SEC-V1:apikey1:"+now+":nodeB")
+	rr2 := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for name mismatch, got %d", rr2.Code)
+	}
+
+	// Unknown key
+	req3 := httptest.NewRequest(http.MethodPut, "/v1/storage/bkt/hsobj3", strings.NewReader("y"))
+	req3.Host = "localhost"
+	req3.Header.Set("Authorization", "HO-SEC-V1:badkey:"+now+":nodeA")
+	rr3 := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rr3, req3)
+	if rr3.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unknown key, got %d", rr3.Code)
+	}
+}

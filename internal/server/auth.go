@@ -62,7 +62,96 @@ type AuthConfig struct {
 	Service     string        // fixed: holydb unless overridden
 	ClockSkew   time.Duration // acceptable skew (default 5m)
 	Credentials CredentialProvider
-	RequireAuth bool // if false, bypass when no Authorization header
+	RequireAuth bool       // if false, bypass when no Authorization header
+	HSKeys      HSProvider // optional HolySecurity keys
+}
+
+// HSProvider maps HolySecurity API keys to metadata (e.g. allowed names / sources).
+type HSProvider interface {
+	Validate(apiKey, dateStr, name, sourceIP string, now time.Time) error
+}
+
+// Simple implementation via env:
+// HOLYDB_HS_KEYS="key1:name1,key2:name2" (names optional; if omitted still valid)
+// Max age configured by HOLYDB_HS_MAX_AGE (duration, default 10m)
+type EnvHSProvider struct {
+	keys   map[string]string
+	maxAge time.Duration
+}
+
+func NewEnvHSProvider() *EnvHSProvider {
+	raw := os.Getenv("HOLYDB_HS_KEYS")
+	m := map[string]string{}
+	if raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			kv := strings.SplitN(part, ":", 2)
+			if len(kv) == 1 {
+				m[kv[0]] = ""
+			} else {
+				m[kv[0]] = kv[1]
+			}
+		}
+	}
+	age := 10 * time.Minute
+	if v := os.Getenv("HOLYDB_HS_MAX_AGE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			age = d
+		}
+	}
+	return &EnvHSProvider{keys: m, maxAge: age}
+}
+
+func (p *EnvHSProvider) Validate(apiKey, dateStr, name, sourceIP string, now time.Time) error {
+	// dateStr expected format YYYYMMDD'T'HHMMSS'Z' or YYYYMMDDHHMMSS
+	var ts time.Time
+	var err error
+	layouts := []string{"20060102T150405Z", "20060102150405"}
+	for _, layout := range layouts {
+		if ts, err = time.Parse(layout, dateStr); err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return errors.New("invalid date")
+	}
+	if absDuration(now.Sub(ts)) > p.maxAge {
+		return errors.New("token expired")
+	}
+	expName, ok := p.keys[apiKey]
+	if !ok {
+		return errors.New("unknown key")
+	}
+	if expName != "" && expName != name {
+		return errors.New("name mismatch")
+	}
+	// Future: enforce sourceIP whitelist via separate env var.
+	return nil
+}
+
+// handleHolySecurity returns true if authentication succeeded.
+// Token format: HO-SEC-V1:ApiKey:Date:Name
+func handleHolySecurity(w http.ResponseWriter, r *http.Request, token string, cfg *AuthConfig) bool {
+	parts := strings.Split(token, ":")
+	if len(parts) < 4 {
+		http.Error(w, "malformed HolySecurity token", http.StatusUnauthorized)
+		return false
+	}
+	apiKey := parts[1]
+	dateStr := parts[2]
+	name := parts[3]
+	if cfg.HSKeys == nil {
+		http.Error(w, "no HS provider", http.StatusUnauthorized)
+		return false
+	}
+	if err := cfg.HSKeys.Validate(apiKey, dateStr, name, r.RemoteAddr, time.Now().UTC()); err != nil {
+		http.Error(w, "holysecurity auth failed: "+err.Error(), http.StatusUnauthorized)
+		return false
+	}
+	return true
 }
 
 func defaultAuthConfig() AuthConfig {
@@ -76,6 +165,7 @@ func defaultAuthConfig() AuthConfig {
 		ClockSkew:   5 * time.Minute,
 		Credentials: NewRootCredentialProvider(),
 		RequireAuth: true,
+		HSKeys:      NewEnvHSProvider(),
 	}
 }
 
@@ -108,6 +198,15 @@ func AuthMiddleware(cfg *AuthConfig) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
+
+			// --- HolySecurity path ---
+			if strings.HasPrefix(authz, "HO-SEC-V1:") {
+				if handleHolySecurity(w, r, authz, &c) {
+					next.ServeHTTP(w, r)
+				}
+				return
+			}
+
 			if !strings.HasPrefix(authz, "AWS4-HMAC-SHA256 ") {
 				http.Error(w, "invalid auth scheme", http.StatusUnauthorized)
 				return
